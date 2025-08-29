@@ -1,0 +1,139 @@
+Kinase Handbook
+
+Abstract
+
+Kinases are important drug targets that control cell growth,
+proliferation, differentiation and metabolism. This process involves
+phosphorylation of multiple substrates in cellular signal transduction
+pathways. Here, the authors provide a synopsis on assay technologies,
+mechanistic considerations for assay design and development pertaining
+to kinase enzymes. This chapter, along with some of the earlier chapters
+in this manual on basics of enzyme assays, mechanism of action and
+purity and identity considerations, serves as an excellent resource for
+beginners in HTS applications.
+
+Introduction
+
+Enzymatic phosphate transfers are one of the predominant mechanisms for
+regulating the growth, differentiation and metabolism of cells. The
+post-translational modification of proteins with phosphate leads to
+dramatic changes in conformation resulting in the modulation of binding,
+catalysis and recruitment of effector molecules that regulate cellular
+signaling pathways. Examples include the recruitment of SH2 domain
+containing proteins, the activation of gene transcription pathways and
+the activation or deactivation of specific cell surface receptors. The
+practical design and implementation of these assays for drug discovery
+and development applications will be the focus of this section.
+
+The keys to protein kinase assay development lie in the ability to: 1.
+Choose an appropriate “readout” technology 2. Have ample quantities of
+enzymes, cell lines, antibodies and reference compounds 3. Optimize the
+assay for buffer conditions, reagent concentrations, timing, stopping,
+order of addition, plate type and assay volume.
+
+…
+
+Radioactive Assay Technologies
+
+Traditional kinase assays measure the transfer of the 32P from the γ
+position of ATP to a peptide or protein substrate results in a 32P
+labeled peptide or protein that may be separated away from the ATP by
+capture on a filter and subsequent washing. The quantity of
+phosphoprotein is quantified by scintillation counting.
+
+…
+
+Fluorescence Assays
+
+Although fluorescent assays are very useful in HTS, the classic issue
+with these assays is that they are susceptible to interference from
+compounds that either absorb light in the excitation or emission range
+of the assay, or that are themselves fluorescent resulting in false
+negatives.
+
+…
+
+Fluorescence Anisotropy (Polarization)
+
+Anisotropy can be measured when a fluorescent molecule is excited with
+polarized light. The ratio of emission intensity in each polarization
+plane gives a measure of anisotropy.
+
+…
+
+Time-Resolved Förster Resonance Energy Transfer (TR-FRET)
+
+These assays are based upon the use of a Europium or Terbium chelate,
+and labeled anti-phosphopeptide or anti-phosphotyrosine antibodies that
+bind to phosphorylated peptides.
+
+…
+
+Luminescent Oxygen Channeling (AlphaScreen, AlphaLISA)
+
+AlphaScreen is a bead-based, non-radioactive, Amplified Luminescent
+Proximity Homogenous Assay.
+
+…
+
+Coupled Assays
+
+Coupled assays require the addition of more enzymes to convert a product
+or substrate into a detectable signal.
+
+…
+
+Assay Development
+
+A general strategy for assay development should include: 1. Choose an
+appropriate readout technology 2. Synthesize, purify and characterize
+enzymes and substrates 3. Design a starting protocol based on prior
+literature or substrate specificity 4. Optimize through matrix
+experiments and pilot studies
+
+…
+
+Mechanism of Action of Kinase Inhibitors
+
+Protein tyrosine kinase inhibitors can act by binding directly in the
+ATP binding site (type I), extending into an adjacent allosteric site
+(type II), or binding to distal sites (type III).
+
+…
+
+Assay Optimization
+
+Optimization involves testing variables such as pH, buffer, plate type,
+and detector reagents to maximize reproducibility, signal-to-noise
+ratio, and physiological relevance.
+
+…
+
+Enzyme Preparations
+
+Purity and activity of enzymes are critical. Contamination with other
+kinases can lead to misleading results.
+
+…
+
+Plate Types and Volumes
+
+White plates are preferred for luminescence, black plates for
+fluorescence. Assay volumes range from 3 µL (1536-well) to 50 µL
+(384-well).
+
+…
+
+Buffers and Solvents
+
+Buffers, detergents, and cofactors must be optimized. DMSO tolerance
+should also be tested.
+
+…
+
+Pilot Screens
+
+Pilot studies are essential to test assay robustness using metrics such
+as Z’ factor (>0.5 desirable).
+
+------------------------------------------------------------------------

@@ -9,7 +9,8 @@ _pool: AsyncConnectionPool | None = None
 
 async def init():
     global _pool
-    _pool = AsyncConnectionPool(DATABASE_URL, min_size=1, max_size=10, open=True)
+    if _pool is None:
+        _pool = AsyncConnectionPool(DATABASE_URL, min_size=1, max_size=10, open=True)
 
 async def close():
     global _pool
@@ -19,7 +20,11 @@ async def close():
 
 @asynccontextmanager
 async def conn():
+    global _pool
+    if _pool is None:
+        await init()
     async with _pool.connection() as c:
         async with c.cursor() as cur:
-            await cur.execute("SET ivfflat.probes = %s;", (IVFFLAT_PROBES,))
+            # Postgres doesn't allow placeholders in SET; inline the int value.
+            await cur.execute(f"SET ivfflat.probes = {int(IVFFLAT_PROBES)};")
         yield c

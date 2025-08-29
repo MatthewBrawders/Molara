@@ -2,6 +2,8 @@
 set -euo pipefail
 
 CMD="${1:-help}"
+
+# You can override these when running (e.g., API_URL=http://localhost:8080/api ./dev addbook ...)
 API_URL="${API_URL:-http://localhost/api}"
 WEB_URL="${WEB_URL:-http://localhost}"
 
@@ -15,7 +17,8 @@ pretty() {
 is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
 is_msys() {
   case "${MSYSTEM:-$(uname -s)}" in
-    MINGW*|MSYS*|CYGWIN*) return 0;; *) return 1;;
+    MINGW*|MSYS*|CYGWIN*) return 0;;
+    *) return 1;;
   esac
 }
 
@@ -46,14 +49,14 @@ open_browser() {
 case "$CMD" in
   up)
     docker compose up -d --build
-    wait_http "$API_URL/health" 60  || echo "[WARN] API not reachable yet: $API_URL/health"
+    wait_http "$API_URL/health" 60 || echo "[WARN] API not reachable yet: $API_URL/health"
     open_browser
     ;;
 
   restart)
     docker compose down
     docker compose up -d --build
-    wait_http "$API_URL/health" 60  || echo "[WARN] API not reachable yet: $API_URL/health"
+    wait_http "$API_URL/health" 60 || echo "[WARN] API not reachable yet: $API_URL/health"
     open_browser
     ;;
 
@@ -111,27 +114,135 @@ case "$CMD" in
     open_browser
     ;;
 
+  addbook)
+    # Usage:
+    #   ./dev addbook path/to/text.txt ["Book Title"] ["Section"] [chunk_chars] [overlap_chars]
+    #
+    # Defaults:
+    #   title        = filename (no extension)
+    #   section      = "Full Text"
+    #   chunk_chars  = 1200
+    #   overlap      = 150
+    infile="${2:-}"
+    [ -z "${infile}" ] && { echo "[ERROR] Provide a text file"; exit 1; }
+    [ ! -f "${infile}" ] && { echo "[ERROR] File not found: ${infile}"; exit 1; }
+
+    title="${3:-$(basename "$infile" | sed 's/\.[^.]*$//')}"
+    section="${4:-Full Text}"
+    chunk_chars="${5:-1200}"
+    overlap_chars="${6:-150}"
+
+    echo "[INFO] Reading: $infile"
+    echo "[INFO] Title:   $title"
+    echo "[INFO] Section: $section"
+    echo "[INFO] Chunk ~${chunk_chars} chars with ${overlap_chars} overlap"
+    echo "[INFO] Posting to $API_URL/chunks/auto"
+
+    # Ensure Python writes UTF-8 on Windows consoles; also JSON-escape non-ASCII.
+    PYTHONIOENCODING=UTF-8 \
+    BOOK_TITLE="$title" SECTION="$section" CHUNK_CHARS="$chunk_chars" OVERLAP="$overlap_chars" \
+    python3 - "$infile" <<'PY' | while IFS= read -r json; do
+import os, sys, re, json
+
+path       = sys.argv[1]
+book_title = os.environ.get("BOOK_TITLE", "Untitled")
+section    = os.environ.get("SECTION", "Full Text")
+chunk_len  = int(os.environ.get("CHUNK_CHARS", "1200"))
+overlap    = int(os.environ.get("OVERLAP", "150"))
+
+with open(path, "r", encoding="utf-8", errors="ignore") as f:
+    raw = f.read()
+
+# Normalize whitespace
+raw = re.sub(r'\r\n?', '\n', raw)
+raw = re.sub(r'[ \t]+', ' ', raw)
+raw = re.sub(r'\n{3,}', '\n\n', raw).strip()
+
+# Keep paragraphs; split into sentence-like units
+paras = [p.strip() for p in raw.split("\n\n") if p.strip()]
+units = []
+for p in paras:
+    if re.match(r'^(#+\s|[A-Z][A-Z0-9 _-]{2,}$)', p):  # headings
+        units.append(p)
+        continue
+    parts = re.split(r'(?<=[.!?])\s+(?=[A-Z(0-9"])', p)
+    for s in parts:
+        s = s.strip()
+        if s:
+            units.append(s)
+
+chunks, buf = [], ""
+for u in units:
+    add = u if not buf else (buf + " " + u)
+    if len(add) <= chunk_len:
+        buf = add
+    else:
+        if buf:
+            chunks.append(buf.strip())
+        if overlap > 0 and chunks:
+            tail = chunks[-1][-overlap:]
+            buf = (tail + " " + u).strip()
+        else:
+            buf = u
+if buf:
+    chunks.append(buf.strip())
+
+for i, body in enumerate(chunks):
+    # ensure_ascii=True avoids Windows CP1252 stdout errors
+    print(json.dumps({
+        "book_title": book_title,
+        "section": section,
+        "chunk_idx": i,
+        "body": body
+    }, ensure_ascii=True))
+PY
+      # Post each JSON line; accept 200 or 201
+      http_code=$(curl -s -o /tmp/.addbook_resp.$$ -w "%{http_code}" \
+        "$API_URL/chunks/auto" \
+        -H 'content-type: application/json; charset=utf-8' \
+        --data-binary "$json")
+      if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
+        echo "[OK] chunk posted"
+      else
+        echo "[ERR] HTTP $http_code"
+        cat /tmp/.addbook_resp.$$
+        echo
+        rm -f /tmp/.addbook_resp.$$
+        exit 1
+      fi
+      rm -f /tmp/.addbook_resp.$$
+    done
+    echo "[DONE] All chunks inserted."
+    ;;
+
   help|*)
     cat <<'USAGE'
 Usage: ./dev <command>
 
 Core:
-  up            Build & start services, wait for API, open browser
-  restart       Rebuild & restart, wait for API, open browser
-  build         Build images only
-  down          Stop and remove containers
-  clean         Stop containers & remove volumes (DB data!)
-  logs          Follow logs
-  ps            Show service status
+  up                Build & start services, wait for API, open browser
+  restart           Rebuild & restart, wait for API, open browser
+  build             Build images only
+  down              Stop and remove containers
+  clean             Stop containers & remove volumes (DB data!)
+  logs              Follow logs
+  ps                Show service status
 
 API shortcuts:
-  health        GET /api/health
-  search [q] [k]    POST /api/search    (default q="kinase receptor phosphorylation", k=3)
+  health            GET /api/health
+  search [q] [k]    POST /api/search (default q="kinase receptor phosphorylation", k=3)
   add-chunk [title] [section] [idx] [body]   POST /api/chunks/auto
 
 Frontend:
-  web-build     Run the frontend build container and refresh Nginx content
-  open          Open the site in your browser
+  web-build         Rebuild the Vite app via the frontend builder service
+  open              Open the site in your browser
+
+RAG:
+  addbook path/to/text.txt ["Book Title"] ["Section"] [chunk_chars] [overlap_chars]
+    - Default title = filename without extension
+    - Default section = "Full Text"
+    - Default chunk_chars = 1200
+    - Default overlap = 150
 
 Env overrides:
   API_URL (default http://localhost/api)
