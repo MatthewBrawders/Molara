@@ -3,9 +3,26 @@ set -euo pipefail
 
 CMD="${1:-help}"
 
-# You can override these when running (e.g., API_URL=http://localhost:8080/api ./dev addbook ...)
+# You can override these at runtime:
 API_URL="${API_URL:-http://localhost/api}"
 WEB_URL="${WEB_URL:-http://localhost}"
+NO_OPEN="${NO_OPEN:-0}"   # set NO_OPEN=1 to skip auto-open
+
+# --- Load env from backend/.env for compose interpolation (GEN_MODEL, etc.) ---
+load_env() {
+  if [ -f "./backend/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./backend/.env
+    set +a
+  fi
+}
+
+# --- Always run docker compose with env preloaded ---
+compose() {
+  load_env
+  docker compose "$@"
+}
 
 pretty() {
   if command -v jq >/dev/null 2>&1; then jq .
@@ -16,14 +33,12 @@ pretty() {
 
 is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
 is_msys() {
-  case "${MSYSTEM:-$(uname -s)}" in
-    MINGW*|MSYS*|CYGWIN*) return 0;;
-    *) return 1;;
-  esac
+  case "${MSYSTEM:-$(uname -s)}" in MINGW*|MSYS*|CYGWIN*) return 0;; *) return 1;; esac
 }
 
+# Wait briefly for either Nginx (/api/health) or the API itself to respond
 wait_http() {
-  local url="$1"; local tries="${2:-60}"
+  local url="$1"; local tries="${2:-20}"
   for _ in $(seq 1 "$tries"); do
     if curl -fsS "$url" -o /dev/null >/dev/null 2>&1; then return 0; fi
     sleep 1
@@ -32,56 +47,73 @@ wait_http() {
 }
 
 open_browser() {
+  [ "$NO_OPEN" = "1" ] && { echo "[INFO] Skipping auto-open (NO_OPEN=1). URL: $WEB_URL"; return 0; }
   echo "[INFO] Opening $WEB_URL ..."
   if is_msys; then
-    command -v powershell.exe >/dev/null 2>&1 && { powershell.exe -NoLogo -NoProfile -Command "Start-Process '$WEB_URL'" >/dev/null 2>&1 & return 0; }
-    command -v cmd.exe       >/dev/null 2>&1 && { cmd.exe /C start "" "$WEB_URL" >/dev/null 2>&1 & return 0; }
+    if command -v powershell.exe >/dev/null 2>&1; then
+      powershell.exe -NoLogo -NoProfile -Command "Start-Process '$WEB_URL'" >/dev/null 2>&1 || true
+      return 0
+    fi
+    if command -v cmd.exe >/dev/null 2>&1; then
+      cmd.exe /C start "" "$WEB_URL" >/dev/null 2>&1 || true
+      return 0
+    fi
   fi
   if is_wsl; then
-    command -v wslview       >/dev/null 2>&1 && { wslview "$WEB_URL" >/dev/null 2>&1 & return 0; }
-    command -v powershell.exe>/dev/null 2>&1 && { powershell.exe -NoLogo -NoProfile -Command "Start-Process '$WEB_URL'" >/dev/null 2>&1 & return 0; }
+    command -v wslview       >/dev/null 2>&1 && { wslview "$WEB_URL" >/dev/null 2>&1 || true; return 0; }
+    command -v powershell.exe>/dev/null 2>&1 && { powershell.exe -NoLogo -NoProfile -Command "Start-Process '$WEB_URL'" >/dev/null 2>&1 || true; return 0; }
   fi
-  command -v xdg-open >/dev/null 2>&1 && { xdg-open "$WEB_URL" >/dev/null 2>&1 & return 0; }
-  command -v open     >/dev/null 2>&1 && { open "$WEB_URL"      >/dev/null 2>&1 & return 0; }
+  command -v xdg-open >/dev/null 2>&1 && { xdg-open "$WEB_URL" >/dev/null 2>&1 || true; return 0; }
+  command -v open     >/dev/null 2>&1 && { open "$WEB_URL"      >/dev/null 2>&1 || true; return 0; }
   echo "[WARN] Could not auto-open. Please open: $WEB_URL"
 }
 
 case "$CMD" in
   up)
-    docker compose up -d --build
-    wait_http "$API_URL/health" 60 || echo "[WARN] API not reachable yet: $API_URL/health"
+    echo "[INFO] Using GEN_MODEL=${GEN_MODEL:-$( (load_env; echo "${GEN_MODEL:-deepseek-r1:7b}") )}"
+    compose up -d --build
+    # try Nginx first, then direct API
+    if ! wait_http "$API_URL/health" 20; then
+      # if API_URL points to nginx (/api), try the backend direct as a fallback
+      echo "[WARN] /api/health not up yet at $API_URL/health — trying backend directly..."
+      wait_http "http://localhost:8000/health" 20 || echo "[WARN] Backend health not reachable yet."
+    fi
     open_browser
     ;;
 
   restart)
-    docker compose down
-    docker compose up -d --build
-    wait_http "$API_URL/health" 60 || echo "[WARN] API not reachable yet: $API_URL/health"
+    echo "[INFO] Using GEN_MODEL=${GEN_MODEL:-$( (load_env; echo "${GEN_MODEL:-deepseek-r1:7b}") )}"
+    compose down
+    compose up -d --build
+    if ! wait_http "$API_URL/health" 20; then
+      echo "[WARN] /api/health not up yet at $API_URL/health — trying backend directly..."
+      wait_http "http://localhost:8000/health" 20 || echo "[WARN] Backend health not reachable yet."
+    fi
     open_browser
     ;;
 
   build)
-    docker compose build
+    compose build
     ;;
 
   down)
-    docker compose down
+    compose down
     ;;
 
   clean|prune)
-    docker compose down -v
+    compose down -v
     ;;
 
   logs)
-    docker compose logs -f
+    compose logs -f
     ;;
 
   ps)
-    docker compose ps
+    compose ps
     ;;
 
   health)
-    curl -s "$API_URL/health" | pretty
+    curl -s "$API_URL/health" | pretty || echo '{"ok":false}'
     ;;
 
   search)
@@ -91,6 +123,15 @@ case "$CMD" in
     curl -s "$API_URL/search" \
       -H 'content-type: application/json' \
       -d "{\"query\":\"$q\",\"top_k\":$k}" | pretty
+    ;;
+
+  query)
+    # ./dev query "What is AlphaScreen and how does it differ from TR-FRET?" [top_k]
+    q="${2:-What is AlphaScreen and how does it differ from TR-FRET?}"
+    k="${3:-5}"
+    curl -s "$API_URL/query" \
+      -H 'content-type: application/json' \
+      -d "{\"question\":\"$q\",\"top_k\":$k}" | pretty
     ;;
 
   add-chunk)
@@ -105,9 +146,8 @@ case "$CMD" in
     ;;
 
   web-build)
-    # Rebuild the Vite app via the frontend builder service
-    docker compose run --rm frontend
-    docker compose restart nginx || true
+    compose run --rm frontend
+    compose restart nginx || true
     ;;
 
   open)
@@ -115,14 +155,7 @@ case "$CMD" in
     ;;
 
   addbook)
-    # Usage:
-    #   ./dev addbook path/to/text.txt ["Book Title"] ["Section"] [chunk_chars] [overlap_chars]
-    #
-    # Defaults:
-    #   title        = filename (no extension)
-    #   section      = "Full Text"
-    #   chunk_chars  = 1200
-    #   overlap      = 150
+    # ./dev addbook path/to/text.txt ["Book Title"] ["Section"] [chunk_chars] [overlap_chars]
     infile="${2:-}"
     [ -z "${infile}" ] && { echo "[ERROR] Provide a text file"; exit 1; }
     [ ! -f "${infile}" ] && { echo "[ERROR] File not found: ${infile}"; exit 1; }
@@ -138,38 +171,45 @@ case "$CMD" in
     echo "[INFO] Chunk ~${chunk_chars} chars with ${overlap_chars} overlap"
     echo "[INFO] Posting to $API_URL/chunks/auto"
 
-    # Ensure Python writes UTF-8 on Windows consoles; also JSON-escape non-ASCII.
     PYTHONIOENCODING=UTF-8 \
-    BOOK_TITLE="$title" SECTION="$section" CHUNK_CHARS="$chunk_chars" OVERLAP="$overlap_chars" \
-    python3 - "$infile" <<'PY' | while IFS= read -r json; do
-import os, sys, re, json
+    API_URL="$API_URL" BOOK_TITLE="$title" SECTION="$section" CHUNK_CHARS="$chunk_chars" OVERLAP="$overlap_chars" \
+    python3 - "$infile" <<'PY'
+import os, sys, re, json, urllib.request
 
-path       = sys.argv[1]
-book_title = os.environ.get("BOOK_TITLE", "Untitled")
-section    = os.environ.get("SECTION", "Full Text")
-chunk_len  = int(os.environ.get("CHUNK_CHARS", "1200"))
-overlap    = int(os.environ.get("OVERLAP", "150"))
+path        = sys.argv[1]
+api_url     = os.environ.get("API_URL", "http://localhost/api")
+book_title  = os.environ.get("BOOK_TITLE", "Untitled")
+section     = os.environ.get("SECTION", "Full Text")
+chunk_len   = int(os.environ.get("CHUNK_CHARS", "1200"))
+overlap     = int(os.environ.get("OVERLAP", "150"))
+
+def post_json(url, obj):
+    data = json.dumps(obj, ensure_ascii=True).encode("utf-8")
+    req = urllib.request.Request(
+        url=url,
+        data=data,
+        headers={"content-type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        _ = resp.read()
 
 with open(path, "r", encoding="utf-8", errors="ignore") as f:
     raw = f.read()
 
-# Normalize whitespace
 raw = re.sub(r'\r\n?', '\n', raw)
 raw = re.sub(r'[ \t]+', ' ', raw)
 raw = re.sub(r'\n{3,}', '\n\n', raw).strip()
 
-# Keep paragraphs; split into sentence-like units
 paras = [p.strip() for p in raw.split("\n\n") if p.strip()]
 units = []
 for p in paras:
-    if re.match(r'^(#+\s|[A-Z][A-Z0-9 _-]{2,}$)', p):  # headings
-        units.append(p)
-        continue
+    if re.match(r'^(#+\s|[A-Z][A-Z0-9 _-]{2,}$)', p):
+        units.append(p); continue
     parts = re.split(r'(?<=[.!?])\s+(?=[A-Z(0-9"])', p)
     for s in parts:
         s = s.strip()
-        if s:
-            units.append(s)
+        if s: units.append(s)
 
 chunks, buf = [], ""
 for u in units:
@@ -188,31 +228,11 @@ if buf:
     chunks.append(buf.strip())
 
 for i, body in enumerate(chunks):
-    # ensure_ascii=True avoids Windows CP1252 stdout errors
-    print(json.dumps({
-        "book_title": book_title,
-        "section": section,
-        "chunk_idx": i,
-        "body": body
-    }, ensure_ascii=True))
+    payload = {"book_title": book_title, "section": section, "chunk_idx": i, "body": body}
+    post_json(f"{api_url.rstrip('/')}/chunks/auto", payload)
+
+print("[DONE] All chunks inserted.")
 PY
-      # Post each JSON line; accept 200 or 201
-      http_code=$(curl -s -o /tmp/.addbook_resp.$$ -w "%{http_code}" \
-        "$API_URL/chunks/auto" \
-        -H 'content-type: application/json; charset=utf-8' \
-        --data-binary "$json")
-      if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
-        echo "[OK] chunk posted"
-      else
-        echo "[ERR] HTTP $http_code"
-        cat /tmp/.addbook_resp.$$
-        echo
-        rm -f /tmp/.addbook_resp.$$
-        exit 1
-      fi
-      rm -f /tmp/.addbook_resp.$$
-    done
-    echo "[DONE] All chunks inserted."
     ;;
 
   help|*)
@@ -220,33 +240,30 @@ PY
 Usage: ./dev <command>
 
 Core:
-  up                Build & start services, wait for API, open browser
-  restart           Rebuild & restart, wait for API, open browser
+  up                Build & start (detached), wait briefly for health, open site
+  restart           Down, rebuild, start, brief health wait, open site
   build             Build images only
   down              Stop and remove containers
   clean             Stop containers & remove volumes (DB data!)
   logs              Follow logs
   ps                Show service status
 
-API shortcuts:
-  health            GET /api/health
-  search [q] [k]    POST /api/search (default q="kinase receptor phosphorylation", k=3)
-  add-chunk [title] [section] [idx] [body]   POST /api/chunks/auto
-
-Frontend:
-  web-build         Rebuild the Vite app via the frontend builder service
-  open              Open the site in your browser
+API:
+  health            GET  /api/health
+  search [q] [k]    POST /api/search
+  query  [q] [k]    POST /api/query  (RAG with Ollama)
 
 RAG:
   addbook path/to/text.txt ["Book Title"] ["Section"] [chunk_chars] [overlap_chars]
-    - Default title = filename without extension
-    - Default section = "Full Text"
-    - Default chunk_chars = 1200
-    - Default overlap = 150
 
-Env overrides:
+Frontend:
+  web-build         Build SPA into Nginx webroot
+  open              Open site in your browser
+
+Env:
   API_URL (default http://localhost/api)
   WEB_URL (default http://localhost)
+  NO_OPEN=1 to skip auto-open
 USAGE
     ;;
 esac
