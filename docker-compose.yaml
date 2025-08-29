@@ -1,0 +1,63 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: textbook
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/initdb:/docker-entrypoint-initdb.d  
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d textbook"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/textbook}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
+      IVFFLAT_PROBES: ${IVFFLAT_PROBES:-10}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    command: sh -c "rm -rf /webroot/* && cp -r /app/dist/* /webroot/"
+    environment:
+      NODE_ENV: production
+    volumes:
+      - webroot:/webroot
+    depends_on:
+      - api
+    restart: "no" 
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - webroot:/usr/share/nginx/html:ro
+
+  adminer:
+    image: adminer
+    ports: ["8080:8080"]
+
+volumes:
+  pgdata:
+  webroot:
