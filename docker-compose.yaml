@@ -40,8 +40,8 @@ services:
     volumes:
       - ollama:/root/.ollama
     environment:
-      OLLAMA_HOST: 0.0.0.0:11434     # no scheme here
-      OLLAMA_KEEP_ALIVE: 15m         # keep runner warm (useful on CPU)
+      OLLAMA_HOST: 0.0.0.0:11434    
+      OLLAMA_KEEP_ALIVE: 15m        
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 5s
@@ -58,7 +58,7 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-      GEN_MODEL: ${GEN_MODEL:-deepseek-r1:7b}   # <- your preferred default
+      GEN_MODEL: ${GEN_MODEL:-deepseek-r1:7b}  
     volumes:
       - ollama:/root/.ollama
     entrypoint: ["/bin/sh","-lc"]
@@ -92,9 +92,7 @@ services:
         condition: service_completed_successfully
       ollama:
         condition: service_healthy
-      # not blocking on ollama-init completion
     healthcheck:
-      # use python stdlib (no curl/wget dependency)
       test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/health'); sys.exit(0)"]
       interval: 10s
       timeout: 5s

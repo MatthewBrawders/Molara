@@ -14,7 +14,6 @@ from embeddings import embed_texts
 
 EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "384"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
-# Keep this consistent with your docker-compose GEN_MODEL
 GEN_MODEL  = os.environ.get("GEN_MODEL", "qwen2.5:3b")
 
 app = FastAPI(title="Textbook RAG API")
@@ -22,7 +21,7 @@ app = FastAPI(title="Textbook RAG API")
 # --- CORS (adjust origins as needed) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["http://your-frontend.example"]
+    allow_origins=["*"], 
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -238,10 +237,8 @@ async def query_stream(q: QueryIn):
             async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as r:
                 r.raise_for_status()
                 async for line in r.aiter_lines():
-                    # Heartbeat to keep proxies from closing idle streams
                     now = time.monotonic()
                     if now - last_heartbeat >= heartbeat_every:
-                        # SSE comment event (ignored by clients, keeps connection open)
                         yield ": ping\n\n"
                         last_heartbeat = now
 
@@ -251,13 +248,10 @@ async def query_stream(q: QueryIn):
                         obj = json.loads(line)
                     except Exception:
                         continue
-                    if "response" in obj and obj["response"]:
-                        # stream incremental delta
+                    if "response" in obj and obj["response"
                         yield "data: " + json.dumps({"delta": obj["response"]}) + "\n\n"
                     if obj.get("done"):
                         break
-
-        # final event with sources (for citations list)
         sources_payload = [
             {
                 "id": s.id,
@@ -269,7 +263,6 @@ async def query_stream(q: QueryIn):
             for s in top_chunks
         ]
         yield "data: " + json.dumps({"final": True, "sources": sources_payload}) + "\n\n"
-        # small delay to ensure client reads the final event before close (optional)
         await asyncio.sleep(0)
 
     return StreamingResponse(
@@ -278,6 +271,6 @@ async def query_stream(q: QueryIn):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # helps Nginx not buffer SSE
+            "X-Accel-Buffering": "no",
         },
     )

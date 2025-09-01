@@ -184,7 +184,7 @@ export default function App() {
           disabled={loading}
           title="Seed one sample chunk, then run"
         >
-          {loading ? "Working…" : "Add sample chunk"}
+          {loading ? "Loading…" : "Add sample chunk"}
         </button>
 
         <div className="health-raw" aria-live="polite">
