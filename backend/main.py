@@ -21,7 +21,7 @@ app = FastAPI(title="Textbook RAG API")
 # --- CORS (adjust origins as needed) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -185,8 +185,8 @@ async def ollama_generate(prompt: str, model: str = GEN_MODEL) -> str:
         "options": {
             "temperature": 0.2,
             "top_p": 0.9,
-            "num_ctx": 8192
-        }
+            "num_ctx": 8192,
+        },
     }
     async with httpx.AsyncClient(timeout=180.0) as client:
         r = await client.post(f"{OLLAMA_URL}/api/generate", json=payload)
@@ -208,7 +208,7 @@ async def query_stream(q: QueryIn):
             yield "data: " + json.dumps({"delta": "", "final": True, "sources": []}) + "\n\n"
         return StreamingResponse(
             empty_stream(),
-            media_type="text/event-stream",
+            media_type="text/event-stream; charset=utf-8",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
@@ -226,32 +226,47 @@ async def query_stream(q: QueryIn):
             "options": {
                 "temperature": 0.2,
                 "top_p": 0.9,
-                "num_ctx": 8192
-            }
+                "num_ctx": 8192,
+            },
         }
 
         heartbeat_every = 15.0  # seconds
         last_heartbeat = time.monotonic()
 
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as r:
-                r.raise_for_status()
-                async for line in r.aiter_lines():
-                    now = time.monotonic()
-                    if now - last_heartbeat >= heartbeat_every:
-                        yield ": ping\n\n"
-                        last_heartbeat = now
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as r:
+                    r.raise_for_status()
+                    async for line in r.aiter_lines():
+                        # Heartbeat to keep proxies from buffering/closing
+                        now = time.monotonic()
+                        if now - last_heartbeat >= heartbeat_every:
+                            yield ": ping\n\n"
+                            last_heartbeat = now
 
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    if "response" in obj and obj["response"
-                        yield "data: " + json.dumps({"delta": obj["response"]}) + "\n\n"
-                    if obj.get("done"):
-                        break
+                        if not line:
+                            continue
+
+                        # Ollama streams JSON objects per line
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            # Ignore non-JSON lines quietly
+                            continue
+
+                        # ---- FIXED BUG: safe access to "response" ----
+                        delta = obj.get("response")
+                        if delta:
+                            yield "data: " + json.dumps({"delta": delta}) + "\n\n"
+
+                        if obj.get("done"):
+                            break
+        except httpx.HTTPError as e:
+            # Surface an error message to the client stream before finishing
+            err = {"delta": "", "error": f"Ollama stream error: {str(e)}"}
+            yield "data: " + json.dumps(err) + "\n\n"
+
+        # Final payload with sources
         sources_payload = [
             {
                 "id": s.id,
@@ -263,11 +278,12 @@ async def query_stream(q: QueryIn):
             for s in top_chunks
         ]
         yield "data: " + json.dumps({"final": True, "sources": sources_payload}) + "\n\n"
+        # Let the event loop breathe (async generator friendly)
         await asyncio.sleep(0)
 
     return StreamingResponse(
         event_stream(),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
